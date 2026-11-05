@@ -42,7 +42,7 @@ MENSAJES_DE_MEMORIA = 6      # últimos mensajes que recuerda el chatbot
 
 MENSAJE_SIN_RESPUESTA = "No encontré esa información en los documentos cargados."
 
-# Modelos por defecto. Si alguno deja de existir, cámbialo desde la barra lateral.
+# Modelos por defecto.
 PROVEEDORES = {
     "OpenAI": {
         "variable_env": "OPENAI_API_KEY",
@@ -69,18 +69,20 @@ PROMPT_CONDENSAR = ChatPromptTemplate.from_messages(
     ]
 )
 
+# PROMPT MODIFICADO PARA QUE SALUDE Y RESPONDA SOCIALMENTE
 PROMPT_RESPUESTA = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "Eres un asistente que responde ÚNICAMENTE con la información del "
-            "CONTEXTO proporcionado. Reglas:\n"
-            "- No uses conocimiento externo ni inventes datos.\n"
-            f"- Si la respuesta no está en el contexto, responde exactamente: "
+            "Eres un asistente virtual amable, educado y profesional. Reglas:\n"
+            "1. Si el usuario te saluda (ej. 'hola', 'buenos días', 'cómo estás') o hace un comentario casual, "
+            "responde con total naturalidad y amabilidad saludando de vuelta.\n"
+            "2. Para responder dudas sobre la información de los archivos, usa ÚNICAMENTE el CONTEXTO proporcionado.\n"
+            "3. No inventes datos externos cuando te pregunten sobre los documentos.\n"
+            f"4. Si te hacen una pregunta sobre los documentos y la respuesta no está en el contexto, responde exactamente: "
             f"'{MENSAJE_SIN_RESPUESTA}'\n"
-            "- Responde en el mismo idioma de la pregunta.\n"
-            "- Cuando ayude, menciona entre corchetes el archivo de donde sale "
-            "la información, por ejemplo [informe.pdf].",
+            "5. Responde siempre en el mismo idioma de la pregunta.\n"
+            "6. Cuando uses información del documento, menciona entre corchetes el archivo de origen, por ejemplo [informe.pdf].",
         ),
         (
             "human",
@@ -92,10 +94,9 @@ PROMPT_RESPUESTA = ChatPromptTemplate.from_messages(
 
 
 # ----------------------------------------------------------------------------
-# LECTURA DE ARCHIVOS (todo en memoria, sin archivos temporales)
+# LECTURA DE ARCHIVOS
 # ----------------------------------------------------------------------------
 def leer_pdf(nombre: str, datos: bytes) -> list[Document]:
-    """Devuelve un Document por página con texto."""
     lector = PdfReader(io.BytesIO(datos))
     documentos = []
     for numero, pagina in enumerate(lector.pages, start=1):
@@ -108,7 +109,6 @@ def leer_pdf(nombre: str, datos: bytes) -> list[Document]:
 
 
 def leer_txt(nombre: str, datos: bytes) -> list[Document]:
-    """Lee texto plano probando varias codificaciones habituales."""
     for codificacion in ("utf-8", "latin-1"):
         try:
             texto = datos.decode(codificacion).strip()
@@ -119,7 +119,6 @@ def leer_txt(nombre: str, datos: bytes) -> list[Document]:
 
 
 def leer_docx(nombre: str, datos: bytes) -> list[Document]:
-    """Extrae párrafos y tablas de un archivo Word (.docx)."""
     doc = DocxDocument(io.BytesIO(datos))
     partes = [p.text for p in doc.paragraphs if p.text.strip()]
     for tabla in doc.tables:
@@ -135,7 +134,6 @@ LECTORES = {".pdf": leer_pdf, ".txt": leer_txt, ".docx": leer_docx}
 
 
 def leer_archivo(archivo) -> list[Document]:
-    """Elige el lector adecuado según la extensión del archivo subido."""
     extension = os.path.splitext(archivo.name)[1].lower()
     return LECTORES[extension](archivo.name, archivo.getvalue())
 
@@ -144,7 +142,6 @@ def leer_archivo(archivo) -> list[Document]:
 # MODELOS E ÍNDICE VECTORIAL
 # ----------------------------------------------------------------------------
 def crear_modelos(proveedor: str, api_key: str, modelo_chat: str, modelo_emb: str):
-    """Crea el modelo de chat y el de embeddings del proveedor elegido."""
     if proveedor == "OpenAI":
         from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
@@ -166,7 +163,6 @@ def crear_modelos(proveedor: str, api_key: str, modelo_chat: str, modelo_emb: st
 
 
 def construir_indice(archivos, embeddings, estado):
-    """Lee, divide e indexa los archivos. Devuelve (índice, n_fragmentos, avisos)."""
     divisor = RecursiveCharacterTextSplitter(
         chunk_size=TAMANO_FRAGMENTO, chunk_overlap=SOLAPE_FRAGMENTO
     )
@@ -177,7 +173,7 @@ def construir_indice(archivos, embeddings, estado):
         estado.update(label=f"Leyendo «{archivo.name}»…")
         try:
             documentos = leer_archivo(archivo)
-        except Exception as error:  # PDF cifrado, archivo dañado, etc.
+        except Exception as error:
             avisos.append(f"No se pudo leer «{archivo.name}»: {error}")
             continue
         if not documentos:
@@ -226,12 +222,9 @@ def formatear_contexto(fragmentos: list[Document]) -> str:
 
 
 def preparar_respuesta(pregunta: str, historial: list[dict]):
-    """Busca fragmentos relevantes y devuelve (flujo_de_texto, fragmentos)."""
     llm = st.session_state.llm
     texto_historial = formatear_historial(historial)
 
-    # Memoria: si hay historial, la pregunta se reformula para que se entienda
-    # sola (ej. "¿y el segundo?" -> "¿Cuál es el segundo requisito del contrato?").
     pregunta_busqueda = pregunta
     if historial:
         pregunta_busqueda = (
@@ -269,7 +262,6 @@ st.set_page_config(page_title="Chatbot con tus documentos", page_icon="📄", la
 st.title("📄 Chatbot con tus documentos")
 st.caption("Responde únicamente con la información de los archivos que subas.")
 
-# Estado persistente entre interacciones de Streamlit.
 for clave, valor in {
     "mensajes": [],
     "indice": None,
@@ -280,15 +272,11 @@ for clave, valor in {
 }.items():
     st.session_state.setdefault(clave, valor)
 
-# ---- Barra lateral ---------------------------------------------------------
 with st.sidebar:
     st.header("⚙️ Configuración")
     proveedor = st.selectbox("Proveedor de IA", list(PROVEEDORES))
     datos_proveedor = PROVEEDORES[proveedor]
 
-    # >>> AQUÍ VA TU API KEY <<<
-    # Opción A (recomendada): ponla en el archivo .env (ver .env.example).
-    # Opción B: pégala en este campo; solo vive en esta sesión del navegador.
     api_key = st.text_input(
         f"API Key de {proveedor}",
         type="password",
@@ -316,9 +304,7 @@ with st.sidebar:
 
     zona_estado = st.container()
 
-# ---- Procesamiento automático al subir/cambiar archivos --------------------
 if archivos and api_key:
-    # La "firma" cambia si cambian los archivos, el proveedor o los modelos.
     firma = hashlib.md5(
         "|".join(
             [proveedor, modelo_chat, modelo_emb]
@@ -350,7 +336,6 @@ if archivos and api_key:
                     estado.update(label="Error al procesar", state="error")
                     st.error(f"{type(error).__name__}: {error}")
 
-# ---- Indicador de estado (siempre visible en la barra lateral) -------------
 with zona_estado:
     if st.session_state.indice is not None:
         n_archivos, n_fragmentos = st.session_state.resumen
@@ -363,7 +348,6 @@ with zona_estado:
     elif not archivos:
         st.info("📥 Sube al menos un documento para empezar.")
 
-# ---- Chat ------------------------------------------------------------------
 for mensaje in st.session_state.mensajes:
     with st.chat_message(mensaje["rol"]):
         st.markdown(mensaje["contenido"])
@@ -379,7 +363,7 @@ pregunta = st.chat_input(
 )
 
 if pregunta:
-    historial_previo = list(st.session_state.mensajes)  # antes de añadir la pregunta
+    historial_previo = list(st.session_state.mensajes)
     st.session_state.mensajes.append({"rol": "user", "contenido": pregunta})
     with st.chat_message("user"):
         st.markdown(pregunta)
@@ -394,4 +378,4 @@ if pregunta:
             )
         except Exception as error:
             st.error(f"No se pudo generar la respuesta ({type(error).__name__}): {error}")
-            st.session_state.mensajes.pop()  # quita la pregunta que falló
+            st.session_state.mensajes.pop()
