@@ -32,13 +32,13 @@ from pypdf import PdfReader
 load_dotenv()
 
 # ----------------------------------------------------------------------------
-# CONFIGURACIÓN GENERAL
+# CONFIGURACIÓN GENERAL (Optimizado para mayor velocidad)
 # ----------------------------------------------------------------------------
 TAMANO_FRAGMENTO = 1000      # caracteres por fragmento
 SOLAPE_FRAGMENTO = 200       # caracteres compartidos entre fragmentos vecinos
-FRAGMENTOS_A_RECUPERAR = 4   # cuántos fragmentos se le dan al modelo por pregunta
+FRAGMENTOS_A_RECUPERAR = 2   # Reducido a 2 para que responda mucho más rápido
 LOTE_EMBEDDINGS = 50         # fragmentos por llamada (evita límites de la API)
-MENSAJES_DE_MEMORIA = 6      # últimos mensajes que recuerda el chatbot
+MENSAJES_DE_MEMORIA = 4      # Reducido a 4 para agilizar el procesamiento del historial
 
 MENSAJE_SIN_RESPUESTA = "No encontré esa información en los documentos cargados."
 
@@ -69,7 +69,7 @@ PROMPT_CONDENSAR = ChatPromptTemplate.from_messages(
     ]
 )
 
-# PROMPT MODIFICADO PARA QUE SALUDE Y RESPONDA SOCIALMENTE
+# PROMPT PARA SALUDOS Y RESPUESTAS RAG
 PROMPT_RESPUESTA = ChatPromptTemplate.from_messages(
     [
         (
