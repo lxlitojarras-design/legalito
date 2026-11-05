@@ -4,14 +4,6 @@ Chatbot RAG local: conversa con tus propios documentos (PDF, TXT, DOCX).
 Interfaz : Streamlit
 Lógica   : LangChain (langchain-core + text-splitters)
 Modelos  : OpenAI o Google Gemini (se elige en la barra lateral)
-
-Cómo funciona (RAG = Retrieval-Augmented Generation):
-  1. Subes archivos en la barra lateral.
-  2. El texto se divide en fragmentos y se convierte en vectores (embeddings).
-  3. Al preguntar, se buscan los fragmentos más parecidos a la pregunta.
-  4. El modelo responde SOLO con esos fragmentos (nada de conocimiento externo).
-
-Ejecutar:  streamlit run app.py
 """
 
 import hashlib
@@ -28,21 +20,19 @@ from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 
-# Carga las variables del archivo .env (si existe) en el entorno.
 load_dotenv()
 
 # ----------------------------------------------------------------------------
-# CONFIGURACIÓN GENERAL (Optimizado para mayor velocidad)
+# CONFIGURACIÓN GENERAL (Optimizado para velocidad y flexibilidad)
 # ----------------------------------------------------------------------------
-TAMANO_FRAGMENTO = 1000      # caracteres por fragmento
-SOLAPE_FRAGMENTO = 200       # caracteres compartidos entre fragmentos vecinos
-FRAGMENTOS_A_RECUPERAR = 2   # Reducido a 2 para que responda mucho más rápido
-LOTE_EMBEDDINGS = 50         # fragmentos por llamada (evita límites de la API)
-MENSAJES_DE_MEMORIA = 4      # Reducido a 4 para agilizar el procesamiento del historial
+TAMANO_FRAGMENTO = 1000
+SOLAPE_FRAGMENTO = 200
+FRAGMENTOS_A_RECUPERAR = 2
+LOTE_EMBEDDINGS = 50
+MENSAJES_DE_MEMORIA = 4
 
 MENSAJE_SIN_RESPUESTA = "No encontré esa información en los documentos cargados."
 
-# Modelos por defecto.
 PROVEEDORES = {
     "OpenAI": {
         "variable_env": "OPENAI_API_KEY",
@@ -56,38 +46,22 @@ PROVEEDORES = {
     },
 }
 
-PROMPT_CONDENSAR = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            "Reformula la última pregunta del usuario como una pregunta completa e "
-            "independiente, usando el historial para resolver referencias como "
-            "'eso', 'él' o 'el segundo punto'. Si ya es independiente, devuélvela "
-            "igual. Devuelve únicamente la pregunta, sin explicaciones.",
-        ),
-        ("human", "Historial:\n{historial}\n\nÚltima pregunta: {pregunta}"),
-    ]
-)
-
-# PROMPT PARA SALUDOS Y RESPUESTAS RAG
 PROMPT_RESPUESTA = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "Eres un asistente virtual amable, educado y profesional. Reglas:\n"
-            "1. Si el usuario te saluda (ej. 'hola', 'buenos días', 'cómo estás') o hace un comentario casual, "
-            "responde con total naturalidad y amabilidad saludando de vuelta.\n"
-            "2. Para responder dudas sobre la información de los archivos, usa ÚNICAMENTE el CONTEXTO proporcionado.\n"
-            "3. No inventes datos externos cuando te pregunten sobre los documentos.\n"
-            f"4. Si te hacen una pregunta sobre los documentos y la respuesta no está en el contexto, responde exactamente: "
+            "Eres un asistente virtual amable, educado y servicial.\n"
+            "1. Si el usuario te saluda ('hola', 'buenos días', 'cómo estás') o hace preguntas casuales/triviales, "
+            "responde con total naturalidad, amabilidad y conversación general sin requerir documentos.\n"
+            "2. Si el usuario te pregunta algo y hay un CONTEXTO de documentos disponible, utilízalo obligatoriamente para responder con precisión.\n"
+            "3. Si te preguntan sobre los documentos y la respuesta NO está en el contexto, di exactamente: "
             f"'{MENSAJE_SIN_RESPUESTA}'\n"
-            "5. Responde siempre en el mismo idioma de la pregunta.\n"
-            "6. Cuando uses información del documento, menciona entre corchetes el archivo de origen, por ejemplo [informe.pdf].",
+            "4. Responde en el mismo idioma de la pregunta.",
         ),
         (
             "human",
-            "CONTEXTO:\n{contexto}\n\nHISTORIAL DE LA CONVERSACIÓN:\n{historial}\n\n"
-            "PREGUNTA: {pregunta}",
+            "CONTEXTO DE DOCUMENTOS:\n{contexto}\n\nHISTORIAL DE LA CONVERSACIÓN:\n{historial}\n\n"
+            "PREGUNTA DEL USUARIO: {pregunta}",
         ),
     ]
 )
@@ -144,17 +118,15 @@ def leer_archivo(archivo) -> list[Document]:
 def crear_modelos(proveedor: str, api_key: str, modelo_chat: str, modelo_emb: str):
     if proveedor == "OpenAI":
         from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-
-        llm = ChatOpenAI(model=modelo_chat, temperature=0, api_key=api_key)
+        llm = ChatOpenAI(model=modelo_chat, temperature=0.3, api_key=api_key)
         embeddings = OpenAIEmbeddings(model=modelo_emb, api_key=api_key)
     else:
         from langchain_google_genai import (
             ChatGoogleGenerativeAI,
             GoogleGenerativeAIEmbeddings,
         )
-
         llm = ChatGoogleGenerativeAI(
-            model=modelo_chat, temperature=0, google_api_key=api_key
+            model=modelo_chat, temperature=0.3, google_api_key=api_key
         )
         embeddings = GoogleGenerativeAIEmbeddings(
             model=modelo_emb, google_api_key=api_key
@@ -177,10 +149,7 @@ def construir_indice(archivos, embeddings, estado):
             avisos.append(f"No se pudo leer «{archivo.name}»: {error}")
             continue
         if not documentos:
-            avisos.append(
-                f"«{archivo.name}» no tiene texto extraíble "
-                "(¿es un PDF escaneado como imagen?)."
-            )
+            avisos.append(f"«{archivo.name}» no tiene texto extraíble.")
             continue
         fragmentos.extend(divisor.split_documents(documentos))
 
@@ -213,6 +182,8 @@ def formatear_historial(mensajes: list[dict]) -> str:
 
 
 def formatear_contexto(fragmentos: list[Document]) -> str:
+    if not fragmentos:
+        return "(No hay documentos cargados o consultados en este momento)"
     bloques = []
     for f in fragmentos:
         pagina = f.metadata.get("page")
@@ -225,15 +196,16 @@ def preparar_respuesta(pregunta: str, historial: list[dict]):
     llm = st.session_state.llm
     texto_historial = formatear_historial(historial)
 
-    pregunta_busqueda = pregunta
-    if historial:
-        pregunta_busqueda = (
-            PROMPT_CONDENSAR | llm | StrOutputParser()
-        ).invoke({"historial": texto_historial, "pregunta": pregunta}).strip()
+    # Si hay un índice de documentos creado, buscamos fragmentos relevantes
+    fragmentos = []
+    if st.session_state.indice is not None:
+        try:
+            fragmentos = st.session_state.indice.similarity_search(
+                pregunta, k=FRAGMENTOS_A_RECUPERAR
+            )
+        except Exception:
+            fragmentos = []
 
-    fragmentos = st.session_state.indice.similarity_search(
-        pregunta_busqueda, k=FRAGMENTOS_A_RECUPERAR
-    )
     cadena = PROMPT_RESPUESTA | llm | StrOutputParser()
     flujo = cadena.stream(
         {
@@ -246,6 +218,8 @@ def preparar_respuesta(pregunta: str, historial: list[dict]):
 
 
 def mostrar_fuentes(fragmentos: list[Document]):
+    if not fragmentos:
+        return
     with st.expander("📚 Fuentes consultadas"):
         for f in fragmentos:
             pagina = f.metadata.get("page")
@@ -260,13 +234,12 @@ def mostrar_fuentes(fragmentos: list[Document]):
 # ----------------------------------------------------------------------------
 st.set_page_config(page_title="Chatbot con tus documentos", page_icon="📄", layout="wide")
 st.title("📄 Chatbot con tus documentos")
-st.caption("Responde únicamente con la información de los archivos que subas.")
+st.caption("Saluda libremente o consulta información de tus archivos.")
 
 for clave, valor in {
     "mensajes": [],
     "indice": None,
     "llm": None,
-    "config_indice": None,
     "firma_intentada": None,
     "resumen": None,
 }.items():
@@ -304,6 +277,14 @@ with st.sidebar:
 
     zona_estado = st.container()
 
+# Inicializamos el LLM por defecto si hay API key aunque no haya subido archivos aún
+if api_key and st.session_state.llm is None:
+    try:
+        llm_temp, _ = crear_modelos(proveedor, api_key, modelo_chat, modelo_emb)
+        st.session_state.llm = llm_temp
+    except Exception:
+        pass
+
 if archivos and api_key:
     firma = hashlib.md5(
         "|".join(
@@ -340,13 +321,12 @@ with zona_estado:
     if st.session_state.indice is not None:
         n_archivos, n_fragmentos = st.session_state.resumen
         st.success(
-            f"✅ {n_archivos} documento(s) procesado(s) · {n_fragmentos} fragmentos. "
-            "¡Listo para consultar!"
+            f"✅ {n_archivos} documento(s) procesado(s) · {n_fragmentos} fragmentos."
         )
     elif not api_key:
-        st.info("🔑 Falta la API Key (campo de arriba o archivo .env).")
-    elif not archivos:
-        st.info("📥 Sube al menos un documento para empezar.")
+        st.info("🔑 Ingresa tu API Key en la barra lateral para empezar a chatear.")
+    else:
+        st.info("ℹ️ Puedes chatear libremente o subir documentos opcionalmente.")
 
 for mensaje in st.session_state.mensajes:
     with st.chat_message(mensaje["rol"]):
@@ -354,15 +334,20 @@ for mensaje in st.session_state.mensajes:
         if mensaje.get("fuentes"):
             mostrar_fuentes(mensaje["fuentes"])
 
-listo = st.session_state.indice is not None
+# El chat ya NO se bloquea si no hay documentos subidos
 pregunta = st.chat_input(
-    "Haz una pregunta sobre tus documentos…"
-    if listo
-    else "Sube documentos y configura tu API Key para chatear",
-    disabled=not listo,
+    "Escribe un saludo o una pregunta sobre tus documentos…"
+    if api_key
+    else "Configura tu API Key en la barra lateral"
 )
 
-if pregunta:
+if pregunta and api_key:
+    if st.session_state.llm is None:
+        try:
+            st.session_state.llm, _ = crear_modelos(proveedor, api_key, modelo_chat, modelo_emb)
+        except Exception:
+            pass
+
     historial_previo = list(st.session_state.mensajes)
     st.session_state.mensajes.append({"rol": "user", "contenido": pregunta})
     with st.chat_message("user"):
